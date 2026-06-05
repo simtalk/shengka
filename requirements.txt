@@ -1,0 +1,4 @@
+# 声卡检测V1.0 依赖文件
+# 此程序主要使用Python标准库，无需额外依赖
+# 如需打包成exe，请确保已安装PyInstaller
+pyinstaller>=5.0.0
