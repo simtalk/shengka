@@ -9,13 +9,48 @@ import platform
 import subprocess
 import re
 import threading
+import sys
+
+
+def safe_decode(output):
+    """安全解码，解决中文乱码问题"""
+    if output is None:
+        return ""
+    if isinstance(output, str):
+        return output
+    # 尝试多种编码
+    for encoding in ['utf-8', 'gbk', 'gb2312', 'gb18030', 'cp936']:
+        try:
+            return output.decode(encoding)
+        except:
+            try:
+                return output.decode('utf-8', errors='replace')
+            except:
+                pass
+    return str(output)
+
+
+def run_command(cmd):
+    """安全执行命令并返回结果"""
+    try:
+        result = subprocess.run(
+            cmd,
+            shell=True,
+            capture_output=True,
+            text=True,
+            encoding='utf-8',
+            errors='replace'
+        )
+        return result.stdout
+    except Exception as e:
+        return ""
 
 
 class SoundCardChecker:
     def __init__(self, root):
         self.root = root
         self.root.title("声卡检测 V1.0 - 知一科技")
-        self.root.geometry("700x550")
+        self.root.geometry("750x600")
         self.root.resizable(False, False)
         self.root.configure(bg="#f0f0f0")
         
@@ -87,14 +122,16 @@ class SoundCardChecker:
         result_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=10)
         
         # 创建Treeview显示结果
-        columns = ("项目", "信息")
-        self.tree = ttk.Treeview(result_frame, columns=columns, show="headings", height=15)
+        columns = ("类型", "项目", "信息")
+        self.tree = ttk.Treeview(result_frame, columns=columns, show="headings", height=18)
         
+        self.tree.heading("类型", text="类型")
         self.tree.heading("项目", text="项目")
         self.tree.heading("信息", text="信息")
         
-        self.tree.column("项目", width=200, anchor="w")
-        self.tree.column("信息", width=450, anchor="w")
+        self.tree.column("类型", width=100, anchor="center")
+        self.tree.column("项目", width=180, anchor="w")
+        self.tree.column("信息", width=420, anchor="w")
         
         # 添加滚动条
         scrollbar = ttk.Scrollbar(result_frame, orient="vertical", command=self.tree.yview)
@@ -106,7 +143,7 @@ class SoundCardChecker:
         # 样式
         style = ttk.Style()
         style.configure("Treeview.Heading", font=("Microsoft YaHei", 11, "bold"))
-        style.configure("Treeview", font=("Microsoft YaHei", 10), rowheight=28)
+        style.configure("Treeview", font=("Microsoft YaHei", 10), rowheight=26)
         
         # 状态栏
         self.status_label = tk.Label(
@@ -136,19 +173,19 @@ class SoundCardChecker:
         
         try:
             # 获取系统信息
-            results.append(("操作系统", platform.system() + " " + platform.release()))
-            results.append(("操作系统版本", platform.version()))
-            results.append(("机器类型", platform.machine()))
-            results.append(("处理器", platform.processor()))
+            results.append(("系统信息", "操作系统", platform.system() + " " + platform.release()))
+            results.append(("系统信息", "操作系统版本", platform.version()))
+            results.append(("系统信息", "机器类型", platform.machine()))
+            results.append(("系统信息", "处理器", platform.processor()))
             
             # Windows系统使用wmic命令
             if platform.system() == "Windows":
                 results.extend(self.get_windows_sound_info())
             else:
-                results.append(("状态", "当前仅支持Windows系统"))
+                results.append(("状态", "系统", "当前仅支持Windows系统"))
             
         except Exception as e:
-            results.append(("错误", str(e)))
+            results.append(("错误", "检测异常", str(e)))
         
         # 在主线程更新UI
         self.root.after(0, lambda: self.update_results(results))
@@ -158,99 +195,87 @@ class SoundCardChecker:
         results = []
         
         try:
-            # 获取音频设备信息
-            output = subprocess.check_output(
-                "powershell -Command \"Get-WmiObject Win32_SoundDevice | Select-Object Name, DeviceID, Status, Manufacturer, ProductName | Format-List\"",
-                shell=True,
-                text=True,
-                encoding='utf-8',
-                errors='replace'
+            # 获取播放设备（扬声器）
+            playback_output = run_command(
+                'powershell -Command "Get-WmiObject Win32_SoundDevice | Where-Object {$_.Name -notmatch \'record|recording|capture|麦克风|录音\'} | Select-Object Name, DeviceID, Status, Manufacturer, ProductName | Format-List"'
             )
             
-            if output:
-                lines = output.strip().split('\n')
-                device_count = 0
-                current_device = {}
-                
-                for line in lines:
-                    line = line.strip()
-                    if not line:
-                        if current_device:
-                            device_count += 1
-                            prefix = f"声卡{device_count}"
-                            results.append((f"{prefix}名称", current_device.get('Name', '未知')))
-                            results.append((f"{prefix}设备ID", current_device.get('DeviceID', '未知')))
-                            results.append((f"{prefix}状态", current_device.get('Status', '未知')))
-                            results.append((f"{prefix}制造商", current_device.get('Manufacturer', '未知')))
-                            results.append((f"{prefix}产品名称", current_device.get('ProductName', '未知')))
-                            current_device = {}
-                    else:
-                        if ':' in line:
-                            key, value = line.split(':', 1)
-                            current_device[key.strip()] = value.strip()
-                
-                # 处理最后一个设备
-                if current_device:
-                    device_count += 1
-                    prefix = f"声卡{device_count}"
-                    results.append((f"{prefix}名称", current_device.get('Name', '未知')))
-                    results.append((f"{prefix}设备ID", current_device.get('DeviceID', '未知')))
-                    results.append((f"{prefix}状态", current_device.get('Status', '未知')))
-                    results.append((f"{prefix}制造商", current_device.get('Manufacturer', '未知')))
-                    results.append((f"{prefix}产品名称", current_device.get('ProductName', '未知')))
-                
-                if device_count == 0:
-                    results.append(("状态", "未检测到声卡设备"))
+            # 获取录制设备（麦克风/录音设备）
+            capture_output = run_command(
+                'powershell -Command "Get-WmiObject Win32_SoundDevice | Where-Object {$_.Name -match \'record|recording|capture|麦克风|录音|Capture|Recording|Analog\'} | Select-Object Name, DeviceID, Status, Manufacturer, ProductName | Format-List"'
+            )
             
-        except subprocess.CalledProcessError:
-            results.append(("状态", "无法获取声卡信息"))
+            # 获取所有音频设备
+            all_output = run_command(
+                'powershell -Command "Get-WmiObject Win32_SoundDevice | Select-Object Name, DeviceID, Status, Manufacturer, ProductName | Format-List"'
+            )
+            
+            # 解析播放设备
+            if playback_output:
+                playback_devices = self.parse_devices(playback_output, "🔊 扬声器/播放")
+                results.extend(playback_devices)
+            
+            # 解析录制设备
+            if capture_output:
+                capture_devices = self.parse_devices(capture_output, "🎤 录音设备")
+                results.extend(capture_devices)
+            
+            # 如果没找到分类，尝试全部解析
+            if not results and all_output:
+                all_devices = self.parse_devices(all_output, "🔊 音频设备")
+                results.extend(all_devices)
+            
+            if not results:
+                results.append(("状态", "检测结果", "未检测到声卡设备"))
+            
         except Exception as e:
-            results.append(("错误", str(e)))
+            results.append(("错误", "获取失败", str(e)))
         
         # 获取音频控制器信息
         try:
-            output = subprocess.check_output(
-                "powershell -Command \"Get-WmiObject Win32_OperatingSystem | Select-Object Caption, OSArchitecture, Version | Format-List\"",
-                shell=True,
-                text=True,
-                encoding='utf-8',
-                errors='replace'
-            )
-        except:
-            pass
-        
-        # 获取声卡驱动信息
-        try:
-            driver_output = subprocess.check_output(
-                "powershell -Command \"driverquery /FO LIST /SI | Select-String -Pattern 'audio|Audio|sound|Sound|声卡'\"",
-                shell=True,
-                text=True,
-                encoding='utf-8',
-                errors='replace'
+            driver_output = run_command(
+                'powershell -Command "driverquery /FO LIST | Select-String -Pattern \'audio|Audio|sound|Sound|AC97\|HDA\|HDAUDIO\''''
             )
             if driver_output.strip():
-                results.append(("相关驱动", driver_output.strip().replace('\n', ' | ')))
+                for line in driver_output.strip().split('\n'):
+                    if line.strip():
+                        results.append(("驱动信息", "驱动", line.strip()))
         except:
             pass
         
-        # 获取播放设备
-        try:
-            playback = subprocess.check_output(
-                "powershell -Command \"Get-WmiObject Win32_LogicalSoundDevice | Select-Object ProductName, DeviceID | Format-List\"",
-                shell=True,
-                text=True,
-                encoding='utf-8',
-                errors='replace'
-            )
-            if playback and "ProductName" in playback:
-                lines = playback.strip().split('\n')
-                for line in lines:
-                    if 'ProductName' in line or 'DeviceID' in line:
-                        parts = line.split(':', 1)
-                        if len(parts) == 2:
-                            results.append(("播放设备" if 'ProductName' in line else "设备ID", parts[1].strip()))
-        except:
-            pass
+        return results
+    
+    def parse_devices(self, output, device_type):
+        """解析设备信息"""
+        results = []
+        if not output:
+            return results
+            
+        lines = output.strip().split('\n')
+        current_device = {}
+        
+        for line in lines:
+            line = line.strip()
+            if not line:
+                if current_device:
+                    name = current_device.get('Name', '未知设备')
+                    results.append((device_type, "设备名称", name))
+                    results.append((device_type, "设备ID", current_device.get('DeviceID', '未知')))
+                    results.append((device_type, "状态", current_device.get('Status', '未知')))
+                    results.append((device_type, "制造商", current_device.get('Manufacturer', '未知')))
+                    current_device = {}
+            else:
+                if ':' in line:
+                    key, value = line.split(':', 1)
+                    current_device[key.strip()] = value.strip()
+        
+        # 处理最后一个设备
+        if current_device:
+            name = current_device.get('Name', '未知设备')
+            results.append((device_type, "设备名称", name))
+            results.append((device_type, "设备ID", current_device.get('DeviceID', '未知')))
+            results.append((device_type, "状态", current_device.get('Status', '未知')))
+            results.append((device_type, "制造商", current_device.get('Manufacturer', '未知')))
         
         return results
     
@@ -259,27 +284,36 @@ class SoundCardChecker:
         for item in self.tree.get_children():
             self.tree.delete(item)
         
-        for i, (key, value) in enumerate(results):
+        for item_type, key, value in results:
             tags = ()
             if "状态" in key and value == "OK":
                 tags = ("success",)
-            elif "错误" in key:
+            elif "错误" in item_type:
                 tags = ("error",)
             
-            self.tree.insert("", tk.END, values=(key, value), tags=tags)
+            self.tree.insert("", tk.END, values=(item_type, key, value), tags=tags)
         
         # 配置标签颜色
         self.tree.tag_configure("success", foreground="#27ae60")
         self.tree.tag_configure("error", foreground="#e74c3c")
         
+        # 统计设备数量
+        speakers = len([v for v in results if v[0] == "🔊 扬声器/播放"])
+        recorders = len([v for v in results if v[0] == "🎤 录音设备"])
+        audio_devices = len([v for v in results if v[0] == "🔊 音频设备"])
+        
+        device_info = f"检测完成：扬声器设备 {speakers//4} 个，录音设备 {recorders//4} 个"
+        if audio_devices > 0:
+            device_info = f"检测完成：共发现 {audio_devices//4} 个音频设备"
+        
         self.scan_btn.config(state="normal", text="🔍 一键检测声卡信息")
-        self.status_label.config(text=f"检测完成，共发现 {len([k for k,v in results if '声卡' in k])} 个声卡设备")
+        self.status_label.config(text=device_info)
     
     def show_about(self):
         """显示关于对话框"""
         about_window = tk.Toplevel(self.root)
         about_window.title("关于 - 声卡检测 V1.0")
-        about_window.geometry("450x400")
+        about_window.geometry("450x420")
         about_window.resizable(False, False)
         about_window.configure(bg="#f0f0f0")
         about_window.transient(self.root)
@@ -288,8 +322,8 @@ class SoundCardChecker:
         # 居中显示
         about_window.update_idletasks()
         x = (about_window.winfo_screenwidth() - 450) // 2
-        y = (about_window.winfo_screenheight() - 400) // 2
-        about_window.geometry(f"450x400+{x}+{y}")
+        y = (about_window.winfo_screenheight() - 420) // 2
+        about_window.geometry(f"450x420+{x}+{y}")
         
         # 关于内容
         content_frame = tk.Frame(about_window, bg="white", bd=2, relief=tk.RAISED)
@@ -334,7 +368,9 @@ class SoundCardChecker:
 • 一键检测本机声卡设备
 • 查看声卡驱动名称和状态
 • 显示设备详细信息
-• 支持Windows系统"""
+• 区分扬声器和录音设备
+• 支持Windows系统
+• 微信：Hello-byte"""
         
         intro_label = tk.Label(
             content_frame,
