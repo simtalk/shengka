@@ -41,7 +41,13 @@ def run_command(cmd):
             encoding='utf-8',
             errors='replace'
         )
-        return result.stdout
+        # 清理可能的乱码字符
+        output = result.stdout
+        if output:
+            # 移除常见的乱码字符
+            output = output.replace('\ufffd', '?')
+            output = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', '', output)
+        return output
     except Exception as e:
         return ""
 
@@ -231,14 +237,18 @@ class SoundCardChecker:
         except Exception as e:
             results.append(("错误", "获取失败", str(e)))
         
-        # 获取音频控制器信息
+        # 获取音频驱动信息 - 使用更可靠的方式
         try:
             driver_output = run_command(
-                'powershell -Command "driverquery /FO LIST | Select-String -Pattern \'audio|Audio|sound|Sound|AC97\|HDA\|HDAUDIO\''''
+                'powershell -Command "Get-WmiObject Win32_PnPSignedDriver | Where-Object {$_.DeviceID -match \'audio|Audio|sound|Sound|AC97|HDA|HDAUDIO|cmudpat3\|Realtek\|Conexant\|IDT\|Broadcom\'} | Select-Object DeviceName, DriverVersion, Manufacturer | Format-Table -AutoSize"'
             )
-            if driver_output.strip():
-                for line in driver_output.strip().split('\n'):
-                    if line.strip():
+            if driver_output and driver_output.strip():
+                # 清理乱码
+                driver_output = driver_output.replace('\ufffd', '?')
+                driver_output = re.sub(r'[│├└┤┼─]', ' ', driver_output)
+                lines = [l for l in driver_output.strip().split('\n') if l.strip()]
+                for line in lines:
+                    if line.strip() and not line.startswith('DeviceName'):
                         results.append(("驱动信息", "驱动", line.strip()))
         except:
             pass
@@ -369,7 +379,6 @@ class SoundCardChecker:
 • 查看声卡驱动名称和状态
 • 显示设备详细信息
 • 区分扬声器和录音设备
-• 支持Windows系统
 • 微信：Hello-byte"""
         
         intro_label = tk.Label(
