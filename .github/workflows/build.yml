@@ -27,11 +27,9 @@ jobs:
     
     - name: Build EXE with PyInstaller
       run: |
-        pyinstaller --onefile --windowed --name "声卡检测V1.0_知一科技" --add-data "sound_card_checker.py;." sound_card_checker.py
-    
-    - name: Create artifacts directory
-      run: |
-        mkdir -p dist
+        Remove-Item -Recurse -Force dist -ErrorAction SilentlyContinue
+        Remove-Item -Recurse -Force build -ErrorAction SilentlyContinue
+        pyinstaller --onefile --windowed --name "声卡检测V1.0_知一科技" sound_card_checker.py
     
     - name: List build output
       run: |
