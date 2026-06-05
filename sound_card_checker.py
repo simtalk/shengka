@@ -231,63 +231,103 @@ class SoundCardChecker:
         results = []
         
         try:
-            # 使用AudioDeviceCmdlets或直接使用Windows API获取音频设备
-            # 获取所有音频终结点设备（播放设备）
-            playback_cmd = '''powershell -Command "Add-Type -AssemblyName System.Windows.Forms; $devices = [System.Windows.Forms.SystemInformation]::Audio; if($devices) { Write-Output ('Speaker: ' + $devices.Speakers) }"'''
-            
-            # 使用WMI获取更详细的音频设备信息
+            # 获取所有声音设备
             all_output = run_command(
-                'powershell -Command "Get-WmiObject Win32_SoundDevice | Format-List"'
+                'powershell -Command "Get-WmiObject Win32_SoundDevice | Format-List Name, DeviceID, Status, Manufacturer"'
             )
             
-            # 获取音频渲染设备（播放）
-            render_output = run_command(
-                '''powershell -Command "
-                    try {
-                        Add-Type -Path '$env:SystemRoot\\System32\\AudioEndpointBuilder.dll' -ErrorAction SilentlyContinue
-                    } catch {}
-                    $sessions = Get-ItemProperty -Path 'HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\MMDevices\\Audio\\Render' -ErrorAction SilentlyContinue
-                    if ($sessions) {
-                        Get-ChildItem -Path 'HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\MMDevices\\Audio\\Render' -Recurse | ForEach-Object {
-                            $props = Get-ItemProperty $_.PSPath -ErrorAction SilentlyContinue
-                            if ($props -and $props.DeviceName) {
-                                Write-Output ('Name: ' + $props.DeviceName)
-                                Write-Output ('State: ' + $props.State)
-                            }
-                        }
-                    }
-                "'''
-            )
+            # 解析所有设备并根据名称区分类型
+            if all_output:
+                lines = all_output.strip().split('\n')
+                current_device = {}
+                
+                for line in lines:
+                    line = line.strip()
+                    if not line:
+                        if current_device and current_device.get('Name'):
+                            name = clean_text(current_device.get('Name', ''))
+                            device_id = clean_text(current_device.get('DeviceID', ''))
+                            status = clean_text(current_device.get('Status', '未知'))
+                            manufacturer = clean_text(current_device.get('Manufacturer', '未知'))
+                            
+                            # 根据名称判断设备类型
+                            name_lower = name.lower()
+                            is_recording = any(keyword in name_lower for keyword in [
+                                'microphone', 'mic', 'recording', 'capture', 'input',
+                                '麦克风', '话筒', '录音', '输入', 'webcam', 'camera'
+                            ])
+                            
+                            if is_recording:
+                                device_type = "🎤 录音设备"
+                            else:
+                                device_type = "🔊 播放设备"
+                            
+                            results.append((device_type, "设备名称", name))
+                            results.append((device_type, "设备ID", device_id))
+                            results.append((device_type, "状态", status))
+                            results.append((device_type, "制造商", manufacturer))
+                            
+                            current_device = {}
+                    else:
+                        if ':' in line:
+                            key, value = line.split(':', 1)
+                            current_device[key.strip()] = value.strip()
+                
+                # 处理最后一个设备
+                if current_device and current_device.get('Name'):
+                    name = clean_text(current_device.get('Name', ''))
+                    device_id = clean_text(current_device.get('DeviceID', ''))
+                    status = clean_text(current_device.get('Status', '未知'))
+                    manufacturer = clean_text(current_device.get('Manufacturer', '未知'))
+                    
+                    name_lower = name.lower()
+                    is_recording = any(keyword in name_lower for keyword in [
+                        'microphone', 'mic', 'recording', 'capture', 'input',
+                        '麦克风', '话筒', '录音', '输入', 'webcam', 'camera'
+                    ])
+                    
+                    if is_recording:
+                        device_type = "🎤 录音设备"
+                    else:
+                        device_type = "🔊 播放设备"
+                    
+                    results.append((device_type, "设备名称", name))
+                    results.append((device_type, "设备ID", device_id))
+                    results.append((device_type, "状态", status))
+                    results.append((device_type, "制造商", manufacturer))
             
-            # 获取音频捕获设备（录音）
-            capture_output = run_command(
-                '''powershell -Command "
-                    $sessions = Get-ItemProperty -Path 'HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\MMDevices\\Audio\\Capture' -ErrorAction SilentlyContinue
-                    if ($sessions) {
-                        Get-ChildItem -Path 'HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\MMDevices\\Audio\\Capture' -Recurse | ForEach-Object {
-                            $props = Get-ItemProperty $_.PSPath -ErrorAction SilentlyContinue
-                            if ($props -and $props.DeviceName) {
-                                Write-Output ('Name: ' + $props.DeviceName)
-                                Write-Output ('State: ' + $props.State)
-                            }
-                        }
-                    }
-                "'''
-            )
-            
-            # 解析播放设备 - 区分扬声器和耳机
-            if render_output and render_output.strip():
-                results.extend(self.parse_audio_devices(render_output, "🔊 扬声器/耳机"))
-            elif all_output:
-                results.extend(self.parse_devices(all_output, "🔊 扬声器/耳机"))
-            
-            # 解析录音设备
-            if capture_output and capture_output.strip():
-                results.extend(self.parse_audio_devices(capture_output, "🎤 录音设备"))
-            
-            # 如果没有找到任何设备，使用WMI获取全部
-            if not results and all_output:
-                results.extend(self.parse_devices(all_output, "🔊 音频设备"))
+            # 如果WMI没有结果，尝试使用PnpDevice
+            if not results:
+                pnp_output = run_command(
+                    'powershell -Command "Get-PnpDevice -Class AudioEndpoint -Status OK | Select-Object FriendlyName, InstanceId, Status | Format-List"'
+                )
+                if pnp_output:
+                    lines = pnp_output.strip().split('\n')
+                    device_count = {"playback": 0, "recording": 0}
+                    
+                    for line in lines:
+                        line = clean_text(line).strip()
+                        if not line:
+                            continue
+                        if ':' in line:
+                            key, value = line.split(':', 1)
+                            key = key.strip()
+                            value = value.strip()
+                            
+                            if key == 'FriendlyName' and value:
+                                name_lower = value.lower()
+                                is_recording = any(k in name_lower for k in ['microphone', 'mic', 'recording', 'capture', '麦克风'])
+                                if is_recording:
+                                    device_count["recording"] += 1
+                                    device_type = "🎤 录音设备"
+                                else:
+                                    device_count["playback"] += 1
+                                    device_type = "🔊 播放设备"
+                                results.append((device_type, f"设备{device_count['playback'] if device_type == '🔊 播放设备' else device_count['recording']}", value))
+                            elif key == 'Status':
+                                results.append((device_type, "状态", value))
+                            elif key == 'InstanceId':
+                                results.append((device_type, "设备ID", value))
             
             if not results:
                 results.append(("状态", "检测结果", "未检测到声卡设备"))
@@ -295,16 +335,15 @@ class SoundCardChecker:
         except Exception as e:
             results.append(("错误", "获取失败", str(e)))
         
-        # 获取音频驱动信息 - 只获取设备名称，简化输出
+        # 获取驱动信息 - 简化为只显示设备名
         try:
             driver_output = run_command(
-                '''powershell -Command "Get-WmiObject Win32_SoundDevice | Select-Object Name, Status | Format-Table -AutoSize"'''
+                'powershell -Command "Get-WmiObject Win32_SoundDevice | Select-Object -ExpandProperty Name"'
             )
             if driver_output and driver_output.strip():
-                # 只保留干净的行
                 for line in driver_output.strip().split('\n'):
                     cleaned = clean_text(line).strip()
-                    if cleaned and 'Name' not in cleaned and cleaned != '':
+                    if cleaned:
                         results.append(("驱动信息", "驱动", cleaned))
         except:
             pass
@@ -413,12 +452,12 @@ class SoundCardChecker:
         self.tree.tag_configure("error", foreground="#e74c3c")
         
         # 统计设备数量
-        speakers = len([v for v in results if v[0] == "🔊 扬声器/耳机"])
+        speakers = len([v for v in results if v[0] == "🔊 播放设备"])
         recorders = len([v for v in results if v[0] == "🎤 录音设备"])
         audio_devices = len([v for v in results if v[0] == "🔊 音频设备"])
         
         if speakers > 0 or recorders > 0:
-            device_info = f"检测完成：扬声器/耳机 {speakers//2} 个，录音设备 {recorders//2} 个"
+            device_info = f"检测完成：播放设备 {speakers//4} 个，录音设备 {recorders//4} 个"
         elif audio_devices > 0:
             device_info = f"检测完成：共发现 {audio_devices//4} 个音频设备"
         else:
