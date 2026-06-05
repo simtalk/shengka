@@ -33,8 +33,7 @@ jobs:
     
     - name: List build output
       run: |
-        ls -la dist/
-        ls -la build/
+        Get-ChildItem -Path dist/ -Recurse
     
     - name: Upload EXE artifact
       uses: actions/upload-artifact@v4
