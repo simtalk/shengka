@@ -39,17 +39,47 @@ def run_command(cmd):
             capture_output=True,
             text=True,
             encoding='utf-8',
-            errors='replace'
+            errors='ignore'
         )
         # 清理可能的乱码字符
         output = result.stdout
         if output:
-            # 移除常见的乱码字符
-            output = output.replace('\ufffd', '?')
-            output = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f]', '', output)
+            # 移除控制字符和非法字符
+            output = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]', '', output)
+            # 移除常见的Unicode替换字符
+            output = output.replace('\ufffd', '')
+            output = output.replace('\u2588', '')  # █
+            output = output.replace('\u2502', '|')  # │
+            output = output.replace('\u251c', '+')  # ├
+            output = output.replace('\u2514', '+')  # └
+            output = output.replace('\u2524', '+')  # ┤
+            output = output.replace('\u253c', '+')  # ┼
+            output = output.replace('\u2500', '-')  # ─
+            output = output.replace('\u2551', '|')  # ║
+            output = output.replace('\u256d', '+')  # ╭
+            output = output.replace('\u256e', '+')  # ╮
+            output = output.replace('\u256f', '+')  # ╯
+            output = output.replace('\u2570', '+')  # ╰
         return output
     except Exception as e:
         return ""
+
+
+def clean_text(text):
+    """清理文本中的乱码字符"""
+    if not text:
+        return ""
+    text = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]', '', text)
+    text = text.replace('\ufffd', '')
+    text = text.replace('\u2588', '')
+    text = text.replace('\u2502', '|')
+    text = text.replace('\u251c', '+')
+    text = text.replace('\u2514', '+')
+    text = text.replace('\u2524', '+')
+    text = text.replace('\u253c', '+')
+    text = text.replace('\u2500', '-')
+    text = text.replace('\u2551', '|')
+    return text
 
 
 class SoundCardChecker:
@@ -240,16 +270,15 @@ class SoundCardChecker:
         # 获取音频驱动信息 - 使用更可靠的方式
         try:
             driver_output = run_command(
-                'powershell -Command "Get-WmiObject Win32_PnPSignedDriver | Where-Object {$_.DeviceID -match \'audio|Audio|sound|Sound|AC97|HDA|HDAUDIO|cmudpat3\|Realtek\|Conexant\|IDT\|Broadcom\'} | Select-Object DeviceName, DriverVersion, Manufacturer | Format-Table -AutoSize"'
+                'powershell -Command "Get-WmiObject Win32_PnPSignedDriver | Where-Object {$_.DeviceID -match \'audio|Audio|sound|Sound|AC97|HDA|HDAUDIO|cmudpat3|Realtek|Conexant|IDT|Broadcom\'} | Select-Object DeviceName, DriverVersion, Manufacturer | Format-Table -AutoSize"'
             )
             if driver_output and driver_output.strip():
-                # 清理乱码
-                driver_output = driver_output.replace('\ufffd', '?')
-                driver_output = re.sub(r'[│├└┤┼─]', ' ', driver_output)
-                lines = [l for l in driver_output.strip().split('\n') if l.strip()]
+                lines = [clean_text(l) for l in driver_output.strip().split('\n') if l.strip()]
                 for line in lines:
-                    if line.strip() and not line.startswith('DeviceName'):
-                        results.append(("驱动信息", "驱动", line.strip()))
+                    # 清理多余的空白字符
+                    line = ' '.join(line.split())
+                    if line and not line.startswith('DeviceName') and not line.startswith('-'):
+                        results.append(("驱动信息", "驱动", line))
         except:
             pass
         
@@ -268,11 +297,11 @@ class SoundCardChecker:
             line = line.strip()
             if not line:
                 if current_device:
-                    name = current_device.get('Name', '未知设备')
+                    name = clean_text(current_device.get('Name', '未知设备'))
                     results.append((device_type, "设备名称", name))
-                    results.append((device_type, "设备ID", current_device.get('DeviceID', '未知')))
-                    results.append((device_type, "状态", current_device.get('Status', '未知')))
-                    results.append((device_type, "制造商", current_device.get('Manufacturer', '未知')))
+                    results.append((device_type, "设备ID", clean_text(current_device.get('DeviceID', '未知'))))
+                    results.append((device_type, "状态", clean_text(current_device.get('Status', '未知'))))
+                    results.append((device_type, "制造商", clean_text(current_device.get('Manufacturer', '未知'))))
                     current_device = {}
             else:
                 if ':' in line:
@@ -281,11 +310,11 @@ class SoundCardChecker:
         
         # 处理最后一个设备
         if current_device:
-            name = current_device.get('Name', '未知设备')
+            name = clean_text(current_device.get('Name', '未知设备'))
             results.append((device_type, "设备名称", name))
-            results.append((device_type, "设备ID", current_device.get('DeviceID', '未知')))
-            results.append((device_type, "状态", current_device.get('Status', '未知')))
-            results.append((device_type, "制造商", current_device.get('Manufacturer', '未知')))
+            results.append((device_type, "设备ID", clean_text(current_device.get('DeviceID', '未知'))))
+            results.append((device_type, "状态", clean_text(current_device.get('Status', '未知'))))
+            results.append((device_type, "制造商", clean_text(current_device.get('Manufacturer', '未知'))))
         
         return results
     
@@ -295,6 +324,11 @@ class SoundCardChecker:
             self.tree.delete(item)
         
         for item_type, key, value in results:
+            # 清理所有文本
+            item_type = clean_text(item_type)
+            key = clean_text(key)
+            value = clean_text(value)
+            
             tags = ()
             if "状态" in key and value == "OK":
                 tags = ("success",)
